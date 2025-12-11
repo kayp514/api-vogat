@@ -36,5 +36,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: '/app/:path*',
+  matcher: '/v:version/:path*',
 }
