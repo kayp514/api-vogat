@@ -1,18 +1,33 @@
 {
-  "name": "vogat-api",
+  "name": "api-vogat",
   "version": "0.1.0",
+  "description": "API endpoints for vogat web app",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
-    "next": "16.0.8"
+    "@prisma/adapter-pg": "^7.1.0",
+    "next": "16.0.8",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@prisma/client": "6.19.0",
+    "@types/node": "^25.0.0",
+    "@types/pg": "^8.15.6",
     "@types/react": "^19",
+    "dotenv": "^16.6.1",
+    "dotenv-cli": "^8.0.0",
+    "prisma": "6.19.0",
     "typescript": "^5"
-  }
+  },
+  "engines": {
+    "node": "23"
+  },
+  "packageManager": "pnpm@10.10.0"
 }
