@@ -1,31 +1,48 @@
-import { searchUsers } from '@/lib/db/queries'
+import { getUser } from '@/lib/db/queries'
 import { NextResponse } from 'next/server'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const query = searchParams.get('q')
+  const uid = searchParams.get('uid')
 
-  if (!query) {
-    return NextResponse.json({
-      success: false,
-      error: {
-        code: 'INVALID_QUERY',
-        message: 'Search query must be at least 2 characters'
-      }
-    })
-  }
-
-  try {
-    const result = await searchUsers(query)
-    return NextResponse.json(result)
-  } catch (error) {
-    console.error('Search API error:', error)
+  if (!uid) {
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: 'SEARCH_ERROR',
-          message: error instanceof Error ? error.message : 'Failed to search users'
+          code: 'INVALID_INPUT',
+          message: 'uid is required'
+        }
+      },
+      { status: 400 }
+    )
+  }
+
+  try {
+    const result = await getUser(uid)
+    
+    if (!result.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: result.error
+        },
+        { status: result.error?.code === 'USER_NOT_FOUND' ? 404 : 500 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      user: result.user
+    })
+  } catch (error) {
+    console.error('Get user API error:', error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: error instanceof Error ? error.message : 'Failed to get user'
         }
       },
       { status: 500 }

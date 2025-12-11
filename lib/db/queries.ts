@@ -100,8 +100,6 @@ export async function searchUsers(query: string, limit: number = 10): Promise<Se
     }
 }
 
-
-
 export async function createUser(data: DatabaseUserInput | null) {
     if (!data) {
         console.error("user: Input is null in createUser");
