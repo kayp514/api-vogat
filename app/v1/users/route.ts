@@ -2,6 +2,8 @@ import { getUser, createUser } from '@/lib/db/queries'
 import { NextResponse } from 'next/server'
 import type { DatabaseUserInput } from '@/lib/db/types'
 
+const DEFAULT_TENANT_ID = 'default'
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const uid = searchParams.get('uid')
@@ -55,16 +57,16 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     
-    const { uid, email, name, avatar, tenantId, isAdmin, phoneNumber, emailVerified, CreatedAt, LastSignInAt } = body
+    const { uid, email, name, avatar, tenantId, isAdmin, phoneNumber, emailVerified, createdAt, lastSignInAt } = body
 
     // Validate required fields
-    if (!uid || !email || !tenantId) {
+    if (!uid || !email) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'INVALID_INPUT',
-            message: 'uid, email, and tenantId are required'
+            message: 'uid and email are required'
           }
         },
         { status: 400 }
@@ -76,12 +78,12 @@ export async function POST(request: Request) {
       email,
       name: name || null,
       avatar: avatar || null,
-      tenantId,
+      tenantId: tenantId || DEFAULT_TENANT_ID,
       isAdmin: isAdmin || false,
       phoneNumber: phoneNumber || null,
       emailVerified: emailVerified || false,
-      CreatedAt: CreatedAt ? new Date(CreatedAt) : null,
-      LastSignInAt: LastSignInAt ? new Date(LastSignInAt) : null,
+      createdAt: createdAt ? new Date(createdAt) : null,
+      lastSignInAt: lastSignInAt ? new Date(lastSignInAt) : null,
     }
 
     const user = await createUser(userData)

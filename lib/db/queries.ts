@@ -116,8 +116,8 @@ export async function createUser(data: DatabaseUserInput | null) {
             isAdmin: data.isAdmin,
             phoneNumber: data.phoneNumber,
             emailVerified: data.emailVerified,
-            CreatedAt: data.CreatedAt,
-            LastSignInAt: data.LastSignInAt,
+            createdAt: data.createdAt,
+            lastSignInAt: data.lastSignInAt,
             updatedAt: new Date(),
             disabled: false
         }
