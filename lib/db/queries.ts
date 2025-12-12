@@ -4,10 +4,54 @@ import prisma from '@/lib/prisma';
 import type { DatabaseUserInput, SearchResult } from './types';
 
 
-export async function getUser(uid: string) {
-    console.log("1. getUser called with id:", uid)
+export async function getAllUsers(maxResults?: number, nextPage?: number) {
     try {
-        console.log("2. Attempting prisma.user.findUnique")
+        const limit = maxResults || 1000;
+        const page = nextPage || 1;
+        const skip = (page - 1) * limit;
+
+        const [users, totalCount] = await Promise.all([
+            prisma.users.findMany({
+                select: {
+                    uid: true,
+                    email: true,
+                    phoneNumber: true,
+                    tenantId: true,
+                    disabled: true,
+                    createdAt: true,
+                    lastSignInAt: true,
+                    isAdmin: true,
+                },
+                skip,
+                take: limit,
+                orderBy: {
+                    createdAt: 'desc',
+                },
+            }),
+            prisma.users.count(),
+        ]);
+
+        return {
+            success: true,
+            users,
+            totalCount,
+            totalPages: Math.ceil(totalCount / limit),
+            currentPage: page,
+        };
+    } catch (error) {
+        console.error('Error fetching all users:', error);
+        return {
+            success: false,
+            error: {
+                code: 'FETCH_USERS_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to fetch users',
+            },
+        };
+    }
+}
+
+export async function getUser(uid: string) {
+    try {
         const dbUser = await prisma.users.findUnique({
             where: { uid },
             select: {
@@ -16,10 +60,8 @@ export async function getUser(uid: string) {
                 emailVerified: true,
             }
         })
-        console.log("3. prisma query result:", dbUser)
 
         if (!dbUser) {
-            console.log("4. No user found in database")
             return {
                 success: false,
                 error: {
@@ -28,19 +70,11 @@ export async function getUser(uid: string) {
                 },
             }
         }
-        console.log("5. User found, returning success")
         return {
             success: true,
             user: dbUser
         }
     } catch (error) {
-        console.error('6. Error in getUser:', error)
-        console.error('6a. Full error details:', {
-            name: error,
-            message: error,
-            stack: error,
-            ...(error || {})
-        })
         return {
             success: false,
             error: {

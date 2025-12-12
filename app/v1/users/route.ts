@@ -1,4 +1,4 @@
-import { getUser, createUser } from '@/lib/db/queries'
+import { createUser, getAllUsers} from '@/lib/db/queries'
 import { NextResponse } from 'next/server'
 import type { DatabaseUserInput } from '@/lib/db/types'
 
@@ -6,23 +6,14 @@ const DEFAULT_TENANT_ID = 'default'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const uid = searchParams.get('uid')
-
-  if (!uid) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: 'INVALID_INPUT',
-          message: 'uid is required'
-        }
-      },
-      { status: 400 }
-    )
-  }
+  const maxResults = searchParams.get('maxResults')
+  const nextPage = searchParams.get('nextPage')
 
   try {
-    const result = await getUser(uid)
+    const result = await getAllUsers(
+      maxResults ? parseInt(maxResults) : undefined,
+      nextPage ? parseInt(nextPage) : undefined
+    )
     
     if (!result.success) {
       return NextResponse.json(
@@ -30,22 +21,25 @@ export async function GET(request: Request) {
           success: false,
           error: result.error
         },
-        { status: result.error?.code === 'USER_NOT_FOUND' ? 404 : 500 }
+        { status: 500 }
       )
     }
 
     return NextResponse.json({
       success: true,
-      user: result.user
+      users: result.users,
+      totalCount: result.totalCount,
+      totalPages: result.totalPages,
+      currentPage: result.currentPage
     })
   } catch (error) {
-    console.error('Get user API error:', error)
+    console.error('Get all users API error:', error)
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Failed to get user'
+          message: error instanceof Error ? error.message : 'Failed to get users'
         }
       },
       { status: 500 }
