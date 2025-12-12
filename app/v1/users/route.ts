@@ -30,7 +30,8 @@ export async function GET(request: Request) {
       users: result.users,
       totalCount: result.totalCount,
       totalPages: result.totalPages,
-      currentPage: result.currentPage
+      currentPage: result.currentPage,
+      hasMore: result.hasMore
     })
   } catch (error) {
     console.error('Get all users API error:', error)

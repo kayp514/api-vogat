@@ -31,12 +31,15 @@ export async function getAllUsers(maxResults?: number, nextPage?: number) {
             prisma.users.count(),
         ]);
 
+        const totalPages = Math.ceil(totalCount / limit);
+        
         return {
             success: true,
             users,
             totalCount,
-            totalPages: Math.ceil(totalCount / limit),
+            totalPages,
             currentPage: page,
+            hasMore: page < totalPages,
         };
     } catch (error) {
         console.error('Error fetching all users:', error);
