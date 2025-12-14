@@ -24,6 +24,7 @@ export interface DatabaseUserInput {
   emailVerified: boolean
   createdAt: Date | null
   lastSignInAt: Date | null
+  disabled?: boolean
 }
   
 export interface SignUpResult {

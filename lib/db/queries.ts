@@ -186,7 +186,73 @@ export async function createUser(data: DatabaseUserInput | null) {
     }
 }
 
-// Get user's chats with latest message
+export async function updateUser(uid: string, data: Partial<DatabaseUserInput>) {
+    try {
+        const existingUser = await prisma.users.findUnique({
+            where: { uid },
+            select: { uid: true }
+        });
+
+        if (!existingUser) {
+            return {
+                success: false,
+                error: {
+                    code: 'USER_NOT_FOUND',
+                    message: 'User not found'
+                }
+            };
+        }
+
+        const updateData: any = {
+            updatedAt: new Date()
+        };
+
+        if (data.email !== undefined) updateData.email = data.email.toLowerCase();
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.avatar !== undefined) updateData.avatar = data.avatar;
+        if (data.tenantId !== undefined) updateData.tenantId = data.tenantId;
+        if (data.isAdmin !== undefined) updateData.isAdmin = data.isAdmin;
+        if (data.phoneNumber !== undefined) updateData.phoneNumber = data.phoneNumber;
+        if (data.emailVerified !== undefined) updateData.emailVerified = data.emailVerified;
+        if (data.lastSignInAt !== undefined) updateData.lastSignInAt = data.lastSignInAt;
+        if (data.disabled !== undefined) updateData.disabled = data.disabled;
+
+        const user = await prisma.users.update({
+            where: { uid },
+            data: updateData,
+            select: {
+                uid: true,
+                email: true,
+                name: true,
+                avatar: true,
+                tenantId: true,
+                isAdmin: true,
+                phoneNumber: true,
+                emailVerified: true,
+                disabled: true,
+                updatedAt: true,
+                createdAt: true,
+                lastSignInAt: true,
+            },
+        });
+
+        return {
+            success: true,
+            user
+        };
+    } catch (error) {
+        console.error('Failed to update user in database:', error);
+        return {
+            success: false,
+            error: {
+                code: 'DB_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to update user'
+            }
+        };
+    }
+}
+
+
 export async function getUserChats(uid: string, tenantId: string) {
     try {
         const userChats = await prisma.chats.findMany({
