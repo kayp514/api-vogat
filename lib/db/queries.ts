@@ -488,6 +488,293 @@ export async function markMessagesAsRead(chatId: string, currentUserId: string, 
 
 
 
+// ==================== WORKSPACE QUERIES ====================
+
+// Get user's workspaces (both owned and member of)
+export async function getUserWorkspaces(userId: string) {
+  try {
+    const workspaces = await prisma.workspaces.findMany({
+      where: {
+        workspaceMembers: {
+          some: {
+            userId: userId
+          }
+        }
+      },
+      include: {
+        owner: {
+          select: {
+            uid: true,
+            name: true,
+            email: true,
+            avatar: true,
+          }
+        },
+        workspaceMembers: {
+          include: {
+            user: {
+              select: {
+                uid: true,
+                name: true,
+                email: true,
+                avatar: true,
+              }
+            }
+          }
+        },
+        _count: {
+          select: {
+            workspaceMembers: true,
+            chats: true,
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    return { success: true, workspaces };
+  } catch (error) {
+    console.error('Error fetching user workspaces:', error);
+    return {
+      success: false,
+      error: {
+        code: 'FETCH_WORKSPACES_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to fetch workspaces'
+      }
+    };
+  }
+}
+
+// Get single workspace details
+export async function getWorkspace(workspaceId: string, userId: string) {
+  try {
+    const workspace = await prisma.workspaces.findFirst({
+      where: {
+        id: workspaceId,
+        workspaceMembers: {
+          some: {
+            userId: userId
+          }
+        }
+      },
+      include: {
+        owner: {
+          select: {
+            uid: true,
+            name: true,
+            email: true,
+            avatar: true,
+          }
+        },
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            domain: true,
+          }
+        },
+        workspaceMembers: {
+          include: {
+            user: {
+              select: {
+                uid: true,
+                name: true,
+                email: true,
+                avatar: true,
+                phoneNumber: true,
+              }
+            }
+          },
+          orderBy: {
+            joinedAt: 'asc'
+          }
+        },
+        _count: {
+          select: {
+            chats: true,
+          }
+        }
+      }
+    });
+
+    if (!workspace) {
+      return {
+        success: false,
+        error: {
+          code: 'WORKSPACE_NOT_FOUND',
+          message: 'Workspace not found or access denied'
+        }
+      };
+    }
+
+    return { success: true, workspace };
+  } catch (error) {
+    console.error('Error fetching workspace:', error);
+    return {
+      success: false,
+      error: {
+        code: 'FETCH_WORKSPACE_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to fetch workspace'
+      }
+    };
+  }
+}
+
+// Create workspace with owner as first member
+export async function createWorkspace(
+  ownerId: string, 
+  tenantId: string, 
+  name: string, 
+  description?: string, 
+  type: 'personal' | 'business' = 'personal'
+) {
+  try {
+    const workspace = await prisma.workspaces.create({
+      data: {
+        name,
+        description,
+        ownerId,
+        tenantId,
+        type,
+        workspaceMembers: {
+          create: {
+            userId: ownerId,
+            role: 'owner'
+          }
+        }
+      },
+      include: {
+        owner: {
+          select: {
+            uid: true,
+            name: true,
+            email: true,
+            avatar: true,
+          }
+        },
+        workspaceMembers: {
+          include: {
+            user: {
+              select: {
+                uid: true,
+                name: true,
+                email: true,
+                avatar: true,
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return { success: true, workspace };
+  } catch (error) {
+    console.error('Error creating workspace:', error);
+    return {
+      success: false,
+      error: {
+        code: 'CREATE_WORKSPACE_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to create workspace'
+      }
+    };
+  }
+}
+
+// Update workspace
+export async function updateWorkspace(
+  workspaceId: string, 
+  userId: string, 
+  data: { name?: string; description?: string; disabled?: boolean; settings?: any }
+) {
+  try {
+    // Verify user is owner or admin
+    const membership = await prisma.workspaceMembers.findFirst({
+      where: {
+        workspaceId,
+        userId,
+        role: { in: ['owner', 'admin'] }
+      }
+    });
+
+    if (!membership) {
+      return {
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Only workspace owners or admins can update workspace'
+        }
+      };
+    }
+
+    const workspace = await prisma.workspaces.update({
+      where: { id: workspaceId },
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
+      include: {
+        owner: {
+          select: {
+            uid: true,
+            name: true,
+            email: true,
+          }
+        }
+      }
+    });
+
+    return { success: true, workspace };
+  } catch (error) {
+    console.error('Error updating workspace:', error);
+    return {
+      success: false,
+      error: {
+        code: 'UPDATE_WORKSPACE_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to update workspace'
+      }
+    };
+  }
+}
+
+// Delete workspace (only owner)
+export async function deleteWorkspace(workspaceId: string, userId: string) {
+  try {
+    const workspace = await prisma.workspaces.findFirst({
+      where: {
+        id: workspaceId,
+        ownerId: userId
+      }
+    });
+
+    if (!workspace) {
+      return {
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Only workspace owner can delete workspace'
+        }
+      };
+    }
+
+    await prisma.workspaces.delete({
+      where: { id: workspaceId }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting workspace:', error);
+    return {
+      success: false,
+      error: {
+        code: 'DELETE_WORKSPACE_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to delete workspace'
+      }
+    };
+  }
+}
+
 
 
 // ==================== WORKSPACE MEMBER QUERIES ====================

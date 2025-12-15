@@ -1,13 +1,11 @@
-import { getUserChats, createNewChat } from '@/lib/db/queries'
+import { getUserChats, createNewChat, getUserWorkspaces } from '@/lib/db/queries'
 import { NextResponse } from 'next/server'
-
-const DEFAULT_TENANT_ID = 'default'
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
+    const workspaceId = searchParams.get('workspaceId')
     const uid = searchParams.get('uid')
-    const tenantId = searchParams.get('tenantId') || DEFAULT_TENANT_ID
 
     if (!uid) {
       return NextResponse.json(
@@ -21,8 +19,70 @@ export async function GET(request: Request) {
         { status: 400 }
       )
     }
+    
+    if (!workspaceId) {
+      const workspacesResult = await getUserWorkspaces(uid)
 
-    const result = await getUserChats(uid, tenantId)
+      if (!workspacesResult.success || !workspacesResult.workspaces?.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'NO_WORKSPACE',
+              message: 'User has no workspaces. Please create a workspace first.'
+            }
+          },
+          { status: 400 }
+        )
+      }
+
+      // Use the first workspace (typically the user's personal workspace)
+      const defaultWorkspaceId = workspacesResult.workspaces[0].id
+      const result = await getUserChats(uid, defaultWorkspaceId)
+
+      if (!result.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: result.error
+          },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        chats: result.chats,
+        workspaceId: defaultWorkspaceId
+      })
+    }
+
+    const workspacesResult = await getUserWorkspaces(uid)
+    if (!workspacesResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: workspacesResult.error
+        },
+        { status: 500 }
+      )
+    }
+
+    const hasAccess = workspacesResult.workspaces?.some((w: { id: string }) => w.id === workspaceId)
+    if (!hasAccess) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'WORKSPACE_ACCESS_DENIED',
+            message: 'You do not have access to this workspace'
+          }
+        },
+        { status: 403 }
+      )
+    }
+
+    const result = await getUserChats(uid, workspaceId)
 
     if (!result.success) {
       return NextResponse.json(
@@ -36,7 +96,8 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      chats: result.chats
+      chats: result.chats,
+      workspaceId
     })
 
   } catch (error) {
@@ -56,7 +117,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { uid, tenantId, recipientId, content } = await request.json()
+    const { uid, tenantId, recipientId, content, workspaceId } = await request.json()
 
     if (!uid) {
       return NextResponse.json(
@@ -84,10 +145,59 @@ export async function POST(request: Request) {
       )
     }
 
+    // Determine which workspace to use
+    let targetWorkspaceId = workspaceId
+
+    if (!targetWorkspaceId) {
+      // Get user's workspaces to find default
+      const workspacesResult = await getUserWorkspaces(uid)
+
+      if (!workspacesResult.success || !workspacesResult.workspaces?.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'NO_WORKSPACE',
+              message: 'User has no workspaces. Please create a workspace first.'
+            }
+          },
+          { status: 400 }
+        )
+      }
+
+      targetWorkspaceId = workspacesResult.workspaces[0].id
+    } else {
+      // Verify user has access to specified workspace
+      const workspacesResult = await getUserWorkspaces(uid)
+      if (!workspacesResult.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: workspacesResult.error
+          },
+          { status: 500 }
+        )
+      }
+
+      const hasAccess = workspacesResult.workspaces?.some((w: { id: string }) => w.id === targetWorkspaceId)
+      if (!hasAccess) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'WORKSPACE_ACCESS_DENIED',
+              message: 'You do not have access to this workspace'
+            }
+          },
+          { status: 403 }
+        )
+      }
+    }
+
     const result = await createNewChat(
       uid,
       recipientId,
-      tenantId || DEFAULT_TENANT_ID,
+      targetWorkspaceId,
       content
     )
 
@@ -103,7 +213,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      chat: result.chat
+      chat: result.chat,
+      workspaceId: targetWorkspaceId
     })
 
   } catch (error) {
