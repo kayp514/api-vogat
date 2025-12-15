@@ -1,27 +1,18 @@
 import { NextResponse } from 'next/server'
-import { getUserWorkspaces, createWorkspace } from '@/lib/db/queries'
+import { getAllWorkspaces, createWorkspace } from '@/lib/db/queries'
 
 const DEFAULT_TENANT_ID = 'default'
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const uid = searchParams.get('uid')
+    const maxResults = searchParams.get('maxResults')
+    const nextPage = searchParams.get('nextPage')
 
-    if (!uid) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_INPUT',
-            message: 'uid is required'
-          }
-        },
-        { status: 400 }
-      )
-    }
-
-    const result = await getUserWorkspaces(uid)
+    const result = await getAllWorkspaces(
+      maxResults ? parseInt(maxResults) : undefined,
+      nextPage ? parseInt(nextPage) : undefined
+    )
 
     if (!result.success) {
       return NextResponse.json(
@@ -35,7 +26,11 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      workspaces: result.workspaces
+      workspaces: result.workspaces,
+      totalCount: result.totalCount,
+      totalPages: result.totalPages,
+      currentPage: result.currentPage,
+      hasMore: result.hasMore
     })
 
   } catch (error) {

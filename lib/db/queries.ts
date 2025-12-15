@@ -491,6 +491,70 @@ export async function markMessagesAsRead(chatId: string, currentUserId: string, 
 // ==================== WORKSPACE QUERIES ====================
 
 // Get user's workspaces (both owned and member of)
+export async function getAllWorkspaces(maxResults?: number, nextPage?: number) {
+  try {
+    const limit = maxResults || 1000;
+    const page = nextPage || 1;
+    const skip = (page - 1) * limit;
+
+    const [workspaces, totalCount] = await Promise.all([
+      prisma.workspaces.findMany({
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          ownerId: true,
+          tenantId: true,
+          type: true,
+          disabled: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              workspaceMembers: true,
+              chats: true,
+            }
+          },
+          owner: {
+            select: {
+              uid: true,
+              name: true,
+              email: true,
+              avatar: true,
+            }
+          }
+        },
+        skip,
+        take: limit,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.workspaces.count(),
+    ]);
+
+    const totalPages = Math.ceil(totalCount / limit);
+
+    return {
+      success: true,
+      workspaces,
+      totalCount,
+      totalPages,
+      currentPage: page,
+      hasMore: page < totalPages,
+    };
+  } catch (error) {
+    console.error('Error fetching all workspaces:', error);
+    return {
+      success: false,
+      error: {
+        code: 'FETCH_WORKSPACES_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to fetch workspaces',
+      },
+    };
+  }
+}
+
 export async function getUserWorkspaces(userId: string) {
   try {
     const workspaces = await prisma.workspaces.findMany({
