@@ -12,6 +12,9 @@ export async function getAllUsers(maxResults?: number, nextPage?: number) {
 
         const [users, totalCount] = await Promise.all([
             prisma.users.findMany({
+                where: {
+                    deleted: false
+                },
                 select: {
                     uid: true,
                     email: true,
@@ -28,7 +31,11 @@ export async function getAllUsers(maxResults?: number, nextPage?: number) {
                     createdAt: 'desc',
                 },
             }),
-            prisma.users.count(),
+            prisma.users.count({
+                where: {
+                    deleted: false
+                }
+            }),
         ]);
 
         const totalPages = Math.ceil(totalCount / limit);
@@ -92,6 +99,7 @@ export async function searchUsers(query: string, limit: number = 10): Promise<Se
     try {
         const dbUser = await prisma.users.findMany({
             where: {
+                deleted: false,
                 OR: [
                     {
                         name: {
@@ -296,6 +304,63 @@ export async function updateUser(uid: string, data: Partial<DatabaseUserInput>) 
             error: {
                 code: 'DB_ERROR',
                 message: error instanceof Error ? error.message : 'Failed to update user'
+            }
+        };
+    }
+}
+
+
+/**
+ * Soft delete user (anonymize email to release it for reuse)
+ * @param uid 
+ * @returns 
+ */
+export async function softDeleteUser(uid: string) {
+    try {
+        const user = await prisma.users.findUnique({
+            where: { uid },
+            select: { email: true, deleted: true }
+        });
+
+        if (!user) {
+            return {
+                success: false,
+                error: { code: 'USER_NOT_FOUND', message: 'User not found' }
+            };
+        }
+
+        if (user.deleted) {
+            return {
+                success: true,
+                message: 'User already deleted'
+            };
+        }
+
+        // Anonymize email to release it for reuse with new Firebase UID
+        const anonymizedEmail = `deleted_${uid}@deleted.local`;
+
+        await prisma.users.update({
+            where: { uid },
+            data: {
+                deleted: true,
+                deletedAt: new Date(),
+                disabled: true,
+                originalEmail: user.email,  // Preserve original email
+                email: anonymizedEmail,      // Release email for reuse
+            }
+        });
+
+        return {
+            success: true,
+            message: 'User soft deleted successfully'
+        };
+    } catch (error) {
+        console.error('Error soft deleting user:', error);
+        return {
+            success: false,
+            error: {
+                code: 'DELETE_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to delete user'
             }
         };
     }

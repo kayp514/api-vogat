@@ -67,6 +67,7 @@ model users {
   uid                  String             @id @unique @db.VarChar(50)
   updatedAt            DateTime           @updatedAt
   email                String             @unique @db.VarChar(255)
+  originalEmail        String?            @db.VarChar(255)
   name                 String?            @db.VarChar(100)
   isAdmin              Boolean            @default(true)
   avatar               String?            @db.VarChar(255)
@@ -76,6 +77,8 @@ model users {
   createdAt            DateTime?
   lastSignInAt         DateTime?
   disabled             Boolean            @default(false)
+  deleted              Boolean            @default(false)
+  deletedAt            DateTime?
   tenant               tenants            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   ownedWorkspaces      workspaces[]       @relation("WorkspaceOwner")
   workspaceMemberships workspaceMembers[]
@@ -85,6 +88,7 @@ model users {
 
   @@index([email])
   @@index([tenantId])
+  @@index([deleted])
   @@map("users")
 }
 
