@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     }
 
     const query = searchParams.get('q')
-    
+
     if (query) {
       const result = await searchMyContacts(uid, query)
 
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { identifier, uid } = body // email, phone, or uid
+    const { identifier, uid } = body
 
     if (!uid) {
       return NextResponse.json(

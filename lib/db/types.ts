@@ -1,18 +1,18 @@
 export interface FirebaseAuthUser {
-    uid: string
-    email: string
-    displayName?: string | null
-    photoURL?: string | null
-    tenantId: string
-    emailVerified: boolean
-    phoneNumber: string | null
-    metadata: {
-        creationTime: string | undefined
-        lastSignInTime: string | undefined
-      }
-    }
+  uid: string
+  email: string
+  displayName?: string | null
+  photoURL?: string | null
+  tenantId: string
+  emailVerified: boolean
+  phoneNumber: string | null
+  metadata: {
+    creationTime: string | undefined
+    lastSignInTime: string | undefined
+  }
+}
 
-  
+
 export interface DatabaseUserInput {
   uid: string
   email: string
@@ -26,43 +26,43 @@ export interface DatabaseUserInput {
   lastSignInAt: Date | null
   disabled?: boolean
 }
-  
+
 export interface SignUpResult {
-    success: boolean
-    user?: {
-      uid: string
-      email: string
-      tenantId: string
-      emailVerified: boolean
-    }
-    error?: {
-      code: string
-      message: string
-    }
+  success: boolean
+  user?: {
+    uid: string
+    email: string
+    tenantId: string
+    emailVerified: boolean
+  }
+  error?: {
+    code: string
+    message: string
+  }
 }
 
 
 
 export interface User {
-    uid: string
-    name: string
-    email: string
-    avatar?: string
+  uid: string
+  name: string
+  email: string
+  avatar?: string
 }
 
-  
+
 export interface SearchSuccess {
-    success: true
-    users: User[]
+  success: true
+  users: User[]
 }
-  
+
 export interface SearchError {
-    success: false
-    error: {
-      code: string
-      message: string
-    }
+  success: false
+  error: {
+    code: string
+    message: string
   }
+}
 
 export type SearchResult = SearchSuccess | SearchError
 
@@ -80,4 +80,16 @@ export interface Message {
   senderId: string
   createdAt: Date
   read: boolean
+}
+
+
+export interface WorkspaceCreateInput {
+  id?: string
+  name: string
+  description?: string | null
+  ownerId: string
+  tenantId: string
+  type: string
+  disabled: boolean
+  settings?: any
 }

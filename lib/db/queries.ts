@@ -1,7 +1,7 @@
 'use server'
 
 import prisma from '@/lib/prisma';
-import type { DatabaseUserInput, SearchResult } from './types';
+import type { DatabaseUserInput, SearchResult, WorkspaceCreateInput } from './types';
 
 
 export async function getAllUsers(maxResults?: number, nextPage?: number) {
@@ -137,7 +137,7 @@ export async function searchUsers(query: string, limit: number = 10): Promise<Se
     }
 }
 
-export async function createUser(data: DatabaseUserInput | null) {
+export async function createUser(data: DatabaseUserInput | null, workspaceId?: string) {
     if (!data) {
         console.error("user: Input is null in createUser");
         throw new Error("User input data is required")
@@ -187,15 +187,21 @@ export async function createUser(data: DatabaseUserInput | null) {
                 ? `${user.name}'s Workspace`
                 : `${user.email.split('@')[0]}'s Workspace`
 
+            const workspaceData: WorkspaceCreateInput = {
+                name: workspaceName,
+                description: 'Personal workspace',
+                ownerId: user.uid,
+                tenantId: user.tenantId,
+                type: 'personal',
+                disabled: false
+            }
+
+            if (workspaceId) {
+                workspaceData.id = workspaceId
+            }
+
             const workspace = await tx.workspaces.create({
-                data: {
-                    name: workspaceName,
-                    description: 'Personal workspace',
-                    ownerId: user.uid,
-                    tenantId: user.tenantId,
-                    type: 'personal',
-                    disabled: false
-                },
+                data: workspaceData,
                 select: {
                     id: true,
                     name: true,
