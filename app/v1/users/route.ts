@@ -1,4 +1,4 @@
-import { createUser, getAllUsers} from '@/lib/db/queries'
+import { createUser, getAllUsers } from '@/lib/db/queries'
 import { NextResponse } from 'next/server'
 import type { DatabaseUserInput } from '@/lib/db/types'
 
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
       maxResults ? parseInt(maxResults) : undefined,
       nextPage ? parseInt(nextPage) : undefined
     )
-    
+
     if (!result.success) {
       return NextResponse.json(
         {
@@ -51,8 +51,19 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    
-    const { uid, email, name, avatar, tenantId, isAdmin, phoneNumber, emailVerified, createdAt, lastSignInAt } = body
+
+    const {
+      uid,
+      email,
+      name,
+      avatar,
+      tenantId,
+      isAdmin,
+      phoneNumber,
+      emailVerified,
+      createdAt,
+      lastSignInAt
+    } = body
 
     // Validate required fields
     if (!uid || !email) {
@@ -81,12 +92,13 @@ export async function POST(request: Request) {
       lastSignInAt: lastSignInAt ? new Date(lastSignInAt) : null,
     }
 
-    const user = await createUser(userData)
+    const result = await createUser(userData)
 
     return NextResponse.json(
       {
         success: true,
-        user
+        user: result.user,
+        workspace: result.workspace
       },
       { status: 201 }
     )

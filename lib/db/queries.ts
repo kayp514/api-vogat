@@ -144,44 +144,87 @@ export async function createUser(data: DatabaseUserInput | null) {
     }
 
     try {
-        const sanitizedData = {
-            uid: data.uid,
-            email: data.email.toLowerCase(),
-            name: data.name,
-            avatar: data.avatar,
-            tenantId: data.tenantId,
-            isAdmin: data.isAdmin,
-            phoneNumber: data.phoneNumber,
-            emailVerified: data.emailVerified,
-            createdAt: data.createdAt,
-            lastSignInAt: data.lastSignInAt,
-            updatedAt: new Date(),
-            disabled: false
-        }
-        const user = await prisma.users.create({
-            data: sanitizedData,
-            select: {
-                uid: true,
-                email: true,
-                name: true,
-                avatar: true,
-                tenantId: true,
-                isAdmin: true,
-                phoneNumber: true,
-                emailVerified: true,
-                disabled: true,
-                updatedAt: true,
-                createdAt: true,
-                lastSignInAt: true,
-            },
-        });
+        const result = await prisma.$transaction(async (tx) => {
 
-        if (!user) {
-            throw new Error("Failed to create user: No user returned from database")
-        }
-        return user;
+            const sanitizedData = {
+                uid: data.uid,
+                email: data.email.toLowerCase(),
+                name: data.name,
+                avatar: data.avatar,
+                tenantId: data.tenantId,
+                isAdmin: data.isAdmin,
+                phoneNumber: data.phoneNumber,
+                emailVerified: data.emailVerified,
+                createdAt: data.createdAt,
+                lastSignInAt: data.lastSignInAt,
+                updatedAt: new Date(),
+                disabled: false
+            }
+
+            const user = await tx.users.create({
+                data: sanitizedData,
+                select: {
+                    uid: true,
+                    email: true,
+                    name: true,
+                    avatar: true,
+                    tenantId: true,
+                    isAdmin: true,
+                    phoneNumber: true,
+                    emailVerified: true,
+                    disabled: true,
+                    updatedAt: true,
+                    createdAt: true,
+                    lastSignInAt: true,
+                },
+            });
+
+            if (!user) {
+                throw new Error("Failed to create user: No user returned from database")
+            }
+
+            const workspaceName = user.name
+                ? `${user.name}'s Workspace`
+                : `${user.email.split('@')[0]}'s Workspace`
+
+            const workspace = await tx.workspaces.create({
+                data: {
+                    name: workspaceName,
+                    description: 'Personal workspace',
+                    ownerId: user.uid,
+                    tenantId: user.tenantId,
+                    type: 'personal',
+                    disabled: false
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    type: true,
+                    createdAt: true
+                }
+            })
+
+            await tx.workspaceMembers.create({
+                data: {
+                    workspaceId: workspace.id,
+                    userId: user.uid,
+                    role: 'owner'
+                }
+            })
+
+            return {
+                user,
+                workspace: {
+                    id: workspace.id,
+                    name: workspace.name,
+                    type: workspace.type
+                }
+            }
+        })
+
+        return result;
     } catch (error) {
-        console.error('Failed to create user in database');
+        console.error('Failed to create user in database:', error);
         throw error;
     }
 }
@@ -264,7 +307,7 @@ export async function getUserChats(uid: string, workspaceId: string) {
                             { recipientId: uid }
                         ]
                     },
-                    { workspaceId: workspaceId } // Ensure tenant isolation
+                    { workspaceId: workspaceId }
                 ]
             },
             orderBy: {
@@ -316,14 +359,19 @@ export async function getUserChats(uid: string, workspaceId: string) {
     }
 }
 
-// Get chat messages
+/**
+ * getChatMessages - Fetch messages for a specific chat within a workspace
+ * @param chatId 
+ * @param workspaceId 
+ * @returns 
+ */
 export async function getChatMessages(chatId: string, workspaceId: string) {
     try {
         const messages = await prisma.messages.findMany({
             where: {
                 chatId: chatId,
                 chat: {
-                    workspaceId: workspaceId // Ensure tenant isolation
+                    workspaceId: workspaceId
                 }
             },
             orderBy: {
@@ -354,10 +402,29 @@ export async function getChatMessages(chatId: string, workspaceId: string) {
     }
 }
 
-// Create new chat with initial message
+
 export async function createNewChat(currentUserId: string, otherUserId: string, workspaceId: string, initialMessage: string) {
     try {
-        // Check if chat already exists
+
+        const currentUser = await prisma.users.findUnique({
+            where: { uid: currentUserId },
+            select: { tenantId: true }
+        });
+
+        if (currentUser?.tenantId === 'default') {
+            const isContact = await areContacts(currentUserId, otherUserId);
+
+            if (!isContact) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'NOT_CONTACT',
+                        message: 'Cannot chat with non-contact. Add them to your contacts first.'
+                    }
+                };
+            }
+        }
+
         const existingChat = await prisma.chats.findFirst({
             where: {
                 AND: [
@@ -434,10 +501,10 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
     }
 }
 
-// Mark messages as read
+
 export async function markMessagesAsRead(chatId: string, currentUserId: string, workspaceId: string) {
     try {
-        // Verify chat belongs to tenant and user is participant
+
         const chat = await prisma.chats.findFirst({
             where: {
                 id: chatId,
@@ -610,7 +677,12 @@ export async function getUserWorkspaces(userId: string) {
     }
 }
 
-// Get single workspace details
+/**
+ * getWorkspace - Fetch a specific workspace by ID, ensuring the user is a member
+ * @param workspaceId 
+ * @param userId 
+ * @returns 
+ */
 export async function getWorkspace(workspaceId: string, userId: string) {
     try {
         const workspace = await prisma.workspaces.findFirst({
@@ -685,7 +757,15 @@ export async function getWorkspace(workspaceId: string, userId: string) {
     }
 }
 
-// Create workspace with owner as first member
+/**
+ * Create a new workspace as well as adding the owner as a member
+ * @param ownerId 
+ * @param tenantId 
+ * @param name 
+ * @param description 
+ * @param type 
+ * @returns 
+ */
 export async function createWorkspace(
     ownerId: string,
     tenantId: string,
@@ -801,7 +881,12 @@ export async function updateWorkspace(
     }
 }
 
-// Delete workspace (only owner)
+/**
+ * Delete a workspace - only the owner can delete
+ * @param workspaceId 
+ * @param userId 
+ * @returns 
+ */
 export async function deleteWorkspace(workspaceId: string, userId: string) {
     try {
         const workspace = await prisma.workspaces.findFirst({
@@ -840,9 +925,12 @@ export async function deleteWorkspace(workspaceId: string, userId: string) {
 
 
 
-// ==================== WORKSPACE MEMBER QUERIES ====================
-
-// Get workspace members
+/**
+ * Get members of a workspace, ensuring the requesting user is a member
+ * @param workspaceId 
+ * @param userId 
+ * @returns 
+ */
 export async function getWorkspaceMembers(workspaceId: string, userId: string) {
     try {
         // Verify user is member of workspace
@@ -896,7 +984,14 @@ export async function getWorkspaceMembers(workspaceId: string, userId: string) {
     }
 }
 
-// Invite user to workspace
+/**
+ * Invite a user to join a workspace
+ * @param workspaceId 
+ * @param inviterId 
+ * @param inviteeId 
+ * @param role 
+ * @returns 
+ */
 export async function inviteToWorkspace(
     workspaceId: string,
     inviterId: string,
@@ -999,7 +1094,13 @@ export async function inviteToWorkspace(
     }
 }
 
-// Remove member from workspace
+/**
+ * Remove a member from a workspace
+ * @param workspaceId 
+ * @param requesterId 
+ * @param memberId 
+ * @returns 
+ */
 export async function removeMemberFromWorkspace(
     workspaceId: string,
     requesterId: string,
@@ -1073,7 +1174,14 @@ export async function removeMemberFromWorkspace(
     }
 }
 
-// Update member role
+/**
+ * Update Workspace Member Role
+ * @param workspaceId 
+ * @param requesterId 
+ * @param memberId 
+ * @param newRole 
+ * @returns 
+ */
 export async function updateMemberRole(
     workspaceId: string,
     requesterId: string,
@@ -1154,10 +1262,16 @@ export async function updateMemberRole(
     }
 }
 
-// Search users within workspace
+/**
+ * Search users within a workspace
+ * @param workspaceId 
+ * @param currentUserId 
+ * @param query 
+ * @param limit 
+ * @returns 
+ */
 export async function searchWorkspaceUsers(workspaceId: string, currentUserId: string, query: string, limit: number = 10) {
     try {
-        // Verify user is member of workspace
         const isMember = await prisma.workspaceMembers.findFirst({
             where: {
                 workspaceId,
@@ -1216,4 +1330,320 @@ export async function searchWorkspaceUsers(workspaceId: string, currentUserId: s
             }
         };
     }
+}
+
+
+/**
+ * Get user's personal contacts (from their personal workspace)
+*/
+export async function getMyContacts(userId: string) {
+    try {
+        const myWorkspace = await prisma.workspaces.findFirst({
+            where: {
+                ownerId: userId,
+                type: 'personal'
+            }
+        });
+
+        if (!myWorkspace) {
+            return {
+                success: false,
+                error: {
+                    code: 'WORKSPACE_NOT_FOUND',
+                    message: 'Personal workspace not found'
+                }
+            };
+        }
+
+        const contacts = await prisma.workspaceMembers.findMany({
+            where: {
+                workspaceId: myWorkspace.id,
+                userId: { not: userId }
+            },
+            include: {
+                user: {
+                    select: {
+                        uid: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                        phoneNumber: true,
+                        tenantId: true
+                    }
+                }
+            },
+            orderBy: {
+                joinedAt: 'desc'
+            }
+        });
+
+        return {
+            success: true,
+            contacts: contacts.map(c => ({
+                ...c.user,
+                addedAt: c.joinedAt
+            }))
+        };
+    } catch (error) {
+        console.error('Error fetching contacts:', error);
+        return {
+            success: false,
+            error: {
+                code: 'FETCH_CONTACTS_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to fetch contacts'
+            }
+        };
+    }
+}
+
+// Search my contacts only
+export async function searchMyContacts(userId: string, query: string, limit: number = 20) {
+    try {
+        const myWorkspace = await prisma.workspaces.findFirst({
+            where: {
+                ownerId: userId,
+                type: 'personal'
+            }
+        });
+
+        if (!myWorkspace) {
+            return {
+                success: false,
+                error: {
+                    code: 'WORKSPACE_NOT_FOUND',
+                    message: 'Personal workspace not found'
+                }
+            };
+        }
+
+        const contacts = await prisma.workspaceMembers.findMany({
+            where: {
+                workspaceId: myWorkspace.id,
+                userId: { not: userId },
+                user: {
+                    OR: [
+                        { name: { contains: query, mode: 'insensitive' } },
+                        { email: { contains: query, mode: 'insensitive' } },
+                        { phoneNumber: { contains: query, mode: 'insensitive' } }
+                    ]
+                }
+            },
+            include: {
+                user: {
+                    select: {
+                        uid: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                        phoneNumber: true
+                    }
+                }
+            },
+            take: limit
+        });
+
+        return {
+            success: true,
+            contacts: contacts.map(c => c.user)
+        };
+    } catch (error) {
+        console.error('Error searching contacts:', error);
+        return {
+            success: false,
+            error: {
+                code: 'SEARCH_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to search contacts'
+            }
+        };
+    }
+}
+
+/**
+ *  Add contact (bidirectional) - Personal users only
+*/
+export async function addContact(inviterId: string, inviteeIdentifier: string) {
+    try {
+        return await prisma.$transaction(async (tx) => {
+            const invitee = await tx.users.findFirst({
+                where: {
+                    OR: [
+                        { email: inviteeIdentifier.toLowerCase() },
+                        { phoneNumber: inviteeIdentifier },
+                        { uid: inviteeIdentifier }
+                    ]
+                }
+            });
+
+            if (!invitee) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'USER_NOT_FOUND',
+                        message: 'User not found'
+                    }
+                };
+            }
+
+            if (invitee.uid === inviterId) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'INVALID_REQUEST',
+                        message: 'Cannot add yourself as contact'
+                    }
+                };
+            }
+
+            const [inviterWorkspace, inviteeWorkspace] = await Promise.all([
+                tx.workspaces.findFirst({
+                    where: { ownerId: inviterId, type: 'personal' }
+                }),
+                tx.workspaces.findFirst({
+                    where: { ownerId: invitee.uid, type: 'personal' }
+                })
+            ]);
+
+            if (!inviterWorkspace || !inviteeWorkspace) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'WORKSPACE_NOT_FOUND',
+                        message: 'Personal workspace not found'
+                    }
+                };
+            }
+
+            const existingContact = await tx.workspaceMembers.findFirst({
+                where: {
+                    workspaceId: inviterWorkspace.id,
+                    userId: invitee.uid
+                }
+            });
+
+            if (existingContact) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'ALREADY_CONTACT',
+                        message: 'User is already in your contacts'
+                    }
+                };
+            }
+
+            await tx.workspaceMembers.create({
+                data: {
+                    workspaceId: inviterWorkspace.id,
+                    userId: invitee.uid,
+                    role: 'member',
+                    invitedBy: inviterId
+                }
+            });
+
+            await tx.workspaceMembers.create({
+                data: {
+                    workspaceId: inviteeWorkspace.id,
+                    userId: inviterId,
+                    role: 'member',
+                    invitedBy: invitee.uid
+                }
+            }).catch(() => {
+                // Ignore if already exists
+            });
+
+            return {
+                success: true,
+                contact: {
+                    uid: invitee.uid,
+                    name: invitee.name,
+                    email: invitee.email,
+                    avatar: invitee.avatar,
+                    phoneNumber: invitee.phoneNumber
+                }
+            };
+        });
+    } catch (error) {
+        console.error('Error adding contact:', error);
+        return {
+            success: false,
+            error: {
+                code: 'ADD_CONTACT_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to add contact'
+            }
+        };
+    }
+}
+
+/**
+ * 
+ * Remove contact (bidirectional)
+*/
+export async function removeContact(userId: string, contactId: string) {
+    try {
+        return await prisma.$transaction(async (tx) => {
+            const [userWorkspace, contactWorkspace] = await Promise.all([
+                tx.workspaces.findFirst({
+                    where: { ownerId: userId, type: 'personal' }
+                }),
+                tx.workspaces.findFirst({
+                    where: { ownerId: contactId, type: 'personal' }
+                })
+            ]);
+
+            if (!userWorkspace || !contactWorkspace) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'WORKSPACE_NOT_FOUND',
+                        message: 'Personal workspace not found'
+                    }
+                };
+            }
+            await Promise.all([
+                tx.workspaceMembers.deleteMany({
+                    where: {
+                        workspaceId: userWorkspace.id,
+                        userId: contactId
+                    }
+                }),
+                tx.workspaceMembers.deleteMany({
+                    where: {
+                        workspaceId: contactWorkspace.id,
+                        userId: userId
+                    }
+                })
+            ]);
+
+            return { success: true };
+        });
+    } catch (error) {
+        console.error('Error removing contact:', error);
+        return {
+            success: false,
+            error: {
+                code: 'REMOVE_CONTACT_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to remove contact'
+            }
+        };
+    }
+}
+
+/**
+ * 
+ * Check if two users are contacts
+*/
+export async function areContacts(userId1: string, userId2: string): Promise<boolean> {
+    const workspace = await prisma.workspaces.findFirst({
+        where: { ownerId: userId1, type: 'personal' }
+    });
+
+    if (!workspace) return false;
+
+    const contact = await prisma.workspaceMembers.findFirst({
+        where: {
+            workspaceId: workspace.id,
+            userId: userId2
+        }
+    });
+
+    return !!contact;
 }
