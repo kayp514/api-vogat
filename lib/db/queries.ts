@@ -4,6 +4,17 @@ import prisma from '@/lib/prisma';
 import type { DatabaseUserInput, SearchResult, WorkspaceCreateInput } from './types';
 
 
+/**
+ * Generate a consistent room ID for 1-on-1 chats based on user emails
+ * Uses email because it persists even if user is deleted and recreated (UID changes)
+ * Format: room_<email1>_<email2> where emails are sorted alphabetically
+ */
+function generateRoomId(email1: string, email2: string): string {
+    const emails = [email1.toLowerCase(), email2.toLowerCase()].sort();
+    return `room_${emails[0]}_${emails[1]}`;
+}
+
+
 export async function getAllUsers(maxResults?: number, nextPage?: number) {
     try {
         const limit = maxResults || 1000;
@@ -367,19 +378,32 @@ export async function softDeleteUser(uid: string) {
 }
 
 
-export async function getUserChats(uid: string, workspaceId: string) {
+export async function getUserChats(uid: string, workspaceId?: string) {
     try {
+        const whereConditions: any[] = [];
+
+        whereConditions.push({
+            type: 'direct',
+            OR: [
+                { senderId: uid },
+                { recipientId: uid }
+            ]
+        });
+
+        if (workspaceId) {
+            whereConditions.push({
+                type: 'workspace',
+                workspaceId: workspaceId,
+                OR: [
+                    { senderId: uid },
+                    { recipientId: uid }
+                ]
+            });
+        }
+
         const userChats = await prisma.chats.findMany({
             where: {
-                AND: [
-                    {
-                        OR: [
-                            { senderId: uid },
-                            { recipientId: uid }
-                        ]
-                    },
-                    { workspaceId: workspaceId }
-                ]
+                OR: whereConditions
             },
             orderBy: {
                 lastMessage: 'desc'
@@ -433,18 +457,22 @@ export async function getUserChats(uid: string, workspaceId: string) {
 /**
  * getChatMessages - Fetch messages for a specific chat within a workspace
  * @param chatId 
- * @param workspaceId 
+ * @param workspaceId
  * @returns 
  */
-export async function getChatMessages(chatId: string, workspaceId: string) {
+export async function getChatMessages(chatId: string, workspaceId?: string) {
     try {
+        const whereCondition: any = { chatId: chatId };
+
+
+        if (workspaceId) {
+            whereCondition.chat = {
+                workspaceId: workspaceId
+            };
+        }
+
         const messages = await prisma.messages.findMany({
-            where: {
-                chatId: chatId,
-                chat: {
-                    workspaceId: workspaceId
-                }
-            },
+            where: whereCondition,
             orderBy: {
                 createdAt: 'desc'
             },
@@ -476,13 +504,28 @@ export async function getChatMessages(chatId: string, workspaceId: string) {
 
 export async function createNewChat(currentUserId: string, otherUserId: string, workspaceId: string, initialMessage: string) {
     try {
+        const [currentUser, otherUser] = await Promise.all([
+            prisma.users.findUnique({
+                where: { uid: currentUserId },
+                select: { tenantId: true, email: true }
+            }),
+            prisma.users.findUnique({
+                where: { uid: otherUserId },
+                select: { email: true }
+            })
+        ]);
 
-        const currentUser = await prisma.users.findUnique({
-            where: { uid: currentUserId },
-            select: { tenantId: true }
-        });
+        if (!currentUser || !otherUser) {
+            return {
+                success: false,
+                error: {
+                    code: 'USER_NOT_FOUND',
+                    message: 'One or both users not found'
+                }
+            };
+        }
 
-        if (currentUser?.tenantId === 'default') {
+        if (currentUser.tenantId === 'default') {
             const isContact = await areContacts(currentUserId, otherUserId);
 
             if (!isContact) {
@@ -496,17 +539,12 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
             }
         }
 
+        const roomId = generateRoomId(currentUser.email, otherUser.email);
+
         const existingChat = await prisma.chats.findFirst({
             where: {
-                AND: [
-                    {
-                        OR: [
-                            { AND: [{ senderId: currentUserId }, { recipientId: otherUserId }] },
-                            { AND: [{ senderId: otherUserId }, { recipientId: currentUserId }] }
-                        ]
-                    },
-                    { workspaceId: workspaceId }
-                ]
+                roomId: roomId,
+                type: 'direct'
             }
         });
 
@@ -527,6 +565,22 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
             const updatedChat = await prisma.chats.findUnique({
                 where: { id: existingChat.id },
                 include: {
+                    sender: {
+                        select: {
+                            uid: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        }
+                    },
+                    recipient: {
+                        select: {
+                            uid: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        }
+                    },
                     messages: {
                         orderBy: { createdAt: 'desc' },
                         take: 1
@@ -537,7 +591,8 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
             return {
                 success: true,
                 chat: updatedChat,
-                isExisting: true
+                isExisting: true,
+                roomId
             };
         }
 
@@ -545,7 +600,8 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
             data: {
                 senderId: currentUserId,
                 recipientId: otherUserId,
-                workspaceId: workspaceId,
+                roomId: roomId,
+                type: 'direct',
                 lastMessage: new Date(),
                 messages: {
                     create: {
@@ -555,11 +611,31 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
                 }
             },
             include: {
+                sender: {
+                    select: {
+                        uid: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                    }
+                },
+                recipient: {
+                    select: {
+                        uid: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                    }
+                },
                 messages: true
             }
         });
 
-        return { success: true, chat };
+        return {
+            success: true,
+            chat,
+            roomId
+        };
     } catch (error) {
         console.error('Error creating new chat:', error);
         return {
@@ -573,18 +649,22 @@ export async function createNewChat(currentUserId: string, otherUserId: string, 
 }
 
 
-export async function markMessagesAsRead(chatId: string, currentUserId: string, workspaceId: string) {
+export async function markMessagesAsRead(chatId: string, currentUserId: string, workspaceId?: string) {
     try {
+        const whereCondition: any = {
+            id: chatId,
+            OR: [
+                { senderId: currentUserId },
+                { recipientId: currentUserId }
+            ]
+        };
+
+        if (workspaceId) {
+            whereCondition.workspaceId = workspaceId;
+        }
 
         const chat = await prisma.chats.findFirst({
-            where: {
-                id: chatId,
-                workspaceId: workspaceId,
-                OR: [
-                    { senderId: currentUserId },
-                    { recipientId: currentUserId }
-                ]
-            }
+            where: whereCondition
         });
 
         if (!chat) {
@@ -1405,34 +1485,17 @@ export async function searchWorkspaceUsers(workspaceId: string, currentUserId: s
 
 
 /**
- * Get user's personal contacts (from their personal workspace)
+ * Get user's contacts (workspace - independent)
 */
 export async function getMyContacts(userId: string) {
     try {
-        const myWorkspace = await prisma.workspaces.findFirst({
+        const contacts = await prisma.contacts.findMany({
             where: {
-                ownerId: userId,
-                type: 'personal'
-            }
-        });
-
-        if (!myWorkspace) {
-            return {
-                success: false,
-                error: {
-                    code: 'WORKSPACE_NOT_FOUND',
-                    message: 'Personal workspace not found'
-                }
-            };
-        }
-
-        const contacts = await prisma.workspaceMembers.findMany({
-            where: {
-                workspaceId: myWorkspace.id,
-                userId: { not: userId }
+                userId: userId,
+                status: 'accepted'
             },
             include: {
-                user: {
+                contact: {
                     select: {
                         uid: true,
                         name: true,
@@ -1444,15 +1507,16 @@ export async function getMyContacts(userId: string) {
                 }
             },
             orderBy: {
-                joinedAt: 'desc'
+                createdAt: 'desc'
             }
         });
 
         return {
             success: true,
             contacts: contacts.map(c => ({
-                ...c.user,
-                addedAt: c.joinedAt
+                ...c.contact,
+                addedAt: c.createdAt,
+                status: c.status
             }))
         };
     } catch (error) {
@@ -1470,28 +1534,11 @@ export async function getMyContacts(userId: string) {
 // Search my contacts only
 export async function searchMyContacts(userId: string, query: string, limit: number = 20) {
     try {
-        const myWorkspace = await prisma.workspaces.findFirst({
+        const contacts = await prisma.contacts.findMany({
             where: {
-                ownerId: userId,
-                type: 'personal'
-            }
-        });
-
-        if (!myWorkspace) {
-            return {
-                success: false,
-                error: {
-                    code: 'WORKSPACE_NOT_FOUND',
-                    message: 'Personal workspace not found'
-                }
-            };
-        }
-
-        const contacts = await prisma.workspaceMembers.findMany({
-            where: {
-                workspaceId: myWorkspace.id,
-                userId: { not: userId },
-                user: {
+                userId: userId,
+                status: 'accepted',
+                contact: {
                     OR: [
                         { name: { contains: query, mode: 'insensitive' } },
                         { email: { contains: query, mode: 'insensitive' } },
@@ -1500,7 +1547,7 @@ export async function searchMyContacts(userId: string, query: string, limit: num
                 }
             },
             include: {
-                user: {
+                contact: {
                     select: {
                         uid: true,
                         name: true,
@@ -1515,7 +1562,7 @@ export async function searchMyContacts(userId: string, query: string, limit: num
 
         return {
             success: true,
-            contacts: contacts.map(c => c.user)
+            contacts: contacts.map(c => c.contact)
         };
     } catch (error) {
         console.error('Error searching contacts:', error);
@@ -1530,13 +1577,14 @@ export async function searchMyContacts(userId: string, query: string, limit: num
 }
 
 /**
- *  Add contact (bidirectional) - Personal users only
+ * Add contact (bidirectional, workspace-independent)
 */
 export async function addContact(inviterId: string, inviteeIdentifier: string) {
     try {
         return await prisma.$transaction(async (tx) => {
             const invitee = await tx.users.findFirst({
                 where: {
+                    deleted: false,
                     OR: [
                         { email: inviteeIdentifier.toLowerCase() },
                         { phoneNumber: inviteeIdentifier },
@@ -1565,29 +1613,11 @@ export async function addContact(inviterId: string, inviteeIdentifier: string) {
                 };
             }
 
-            const [inviterWorkspace, inviteeWorkspace] = await Promise.all([
-                tx.workspaces.findFirst({
-                    where: { ownerId: inviterId, type: 'personal' }
-                }),
-                tx.workspaces.findFirst({
-                    where: { ownerId: invitee.uid, type: 'personal' }
-                })
-            ]);
-
-            if (!inviterWorkspace || !inviteeWorkspace) {
-                return {
-                    success: false,
-                    error: {
-                        code: 'WORKSPACE_NOT_FOUND',
-                        message: 'Personal workspace not found'
-                    }
-                };
-            }
-
-            const existingContact = await tx.workspaceMembers.findFirst({
+            // Check if contact relationship already exists
+            const existingContact = await tx.contacts.findFirst({
                 where: {
-                    workspaceId: inviterWorkspace.id,
-                    userId: invitee.uid
+                    userId: inviterId,
+                    contactId: invitee.uid
                 }
             });
 
@@ -1601,25 +1631,25 @@ export async function addContact(inviterId: string, inviteeIdentifier: string) {
                 };
             }
 
-            await tx.workspaceMembers.create({
-                data: {
-                    workspaceId: inviterWorkspace.id,
-                    userId: invitee.uid,
-                    role: 'member',
-                    invitedBy: inviterId
-                }
-            });
-
-            await tx.workspaceMembers.create({
-                data: {
-                    workspaceId: inviteeWorkspace.id,
-                    userId: inviterId,
-                    role: 'member',
-                    invitedBy: invitee.uid
-                }
-            }).catch(() => {
-                // Ignore if already exists
-            });
+            // Create bidirectional contact relationship
+            await Promise.all([
+                // Add invitee to inviter's contacts
+                tx.contacts.create({
+                    data: {
+                        userId: inviterId,
+                        contactId: invitee.uid,
+                        status: 'accepted'
+                    }
+                }),
+                // Add inviter to invitee's contacts (bidirectional)
+                tx.contacts.create({
+                    data: {
+                        userId: invitee.uid,
+                        contactId: inviterId,
+                        status: 'accepted'
+                    }
+                })
+            ]);
 
             return {
                 success: true,
@@ -1645,41 +1675,23 @@ export async function addContact(inviterId: string, inviteeIdentifier: string) {
 }
 
 /**
- * 
- * Remove contact (bidirectional)
+ * Remove contact (bidirectional, workspace-independent)
 */
 export async function removeContact(userId: string, contactId: string) {
     try {
         return await prisma.$transaction(async (tx) => {
-            const [userWorkspace, contactWorkspace] = await Promise.all([
-                tx.workspaces.findFirst({
-                    where: { ownerId: userId, type: 'personal' }
-                }),
-                tx.workspaces.findFirst({
-                    where: { ownerId: contactId, type: 'personal' }
-                })
-            ]);
-
-            if (!userWorkspace || !contactWorkspace) {
-                return {
-                    success: false,
-                    error: {
-                        code: 'WORKSPACE_NOT_FOUND',
-                        message: 'Personal workspace not found'
-                    }
-                };
-            }
+            // Delete bidirectional contact relationships
             await Promise.all([
-                tx.workspaceMembers.deleteMany({
+                tx.contacts.deleteMany({
                     where: {
-                        workspaceId: userWorkspace.id,
-                        userId: contactId
+                        userId: userId,
+                        contactId: contactId
                     }
                 }),
-                tx.workspaceMembers.deleteMany({
+                tx.contacts.deleteMany({
                     where: {
-                        workspaceId: contactWorkspace.id,
-                        userId: userId
+                        userId: contactId,
+                        contactId: userId
                     }
                 })
             ]);
@@ -1699,20 +1711,14 @@ export async function removeContact(userId: string, contactId: string) {
 }
 
 /**
- * 
- * Check if two users are contacts
+ * Check if two users are contacts (workspace-independent)
 */
 export async function areContacts(userId1: string, userId2: string): Promise<boolean> {
-    const workspace = await prisma.workspaces.findFirst({
-        where: { ownerId: userId1, type: 'personal' }
-    });
-
-    if (!workspace) return false;
-
-    const contact = await prisma.workspaceMembers.findFirst({
+    const contact = await prisma.contacts.findFirst({
         where: {
-            workspaceId: workspace.id,
-            userId: userId2
+            userId: userId1,
+            contactId: userId2,
+            status: 'accepted'
         }
     });
 

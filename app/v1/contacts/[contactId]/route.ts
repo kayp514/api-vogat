@@ -29,7 +29,10 @@ export async function DELETE(
 
     if (!result.success) {
       return NextResponse.json(
-        { success: false, error: result.error },
+        {
+          success: false,
+          error: 'error' in result ? result.error : { code: 'UNKNOWN_ERROR', message: 'Failed to remove contact' }
+        },
         { status: 500 }
       )
     }
