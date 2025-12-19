@@ -156,98 +156,51 @@ export async function searchUsers(query: string, limit: number = 10): Promise<Se
     }
 }
 
-export async function createUser(data: DatabaseUserInput | null, workspaceId?: string) {
+export async function createUser(data: DatabaseUserInput | null) {
     if (!data) {
         console.error("user: Input is null in createUser");
         throw new Error("User input data is required")
     }
 
     try {
-        const result = await prisma.$transaction(async (tx) => {
+        const sanitizedData = {
+            uid: data.uid,
+            email: data.email.toLowerCase(),
+            name: data.name,
+            avatar: data.avatar,
+            tenantId: data.tenantId,
+            isAdmin: data.isAdmin,
+            phoneNumber: data.phoneNumber,
+            emailVerified: data.emailVerified,
+            createdAt: data.createdAt,
+            lastSignInAt: data.lastSignInAt,
+            updatedAt: new Date(),
+            disabled: false
+        }
 
-            const sanitizedData = {
-                uid: data.uid,
-                email: data.email.toLowerCase(),
-                name: data.name,
-                avatar: data.avatar,
-                tenantId: data.tenantId,
-                isAdmin: data.isAdmin,
-                phoneNumber: data.phoneNumber,
-                emailVerified: data.emailVerified,
-                createdAt: data.createdAt,
-                lastSignInAt: data.lastSignInAt,
-                updatedAt: new Date(),
-                disabled: false
-            }
+        const user = await prisma.users.create({
+            data: sanitizedData,
+            select: {
+                uid: true,
+                email: true,
+                name: true,
+                avatar: true,
+                tenantId: true,
+                isAdmin: true,
+                phoneNumber: true,
+                emailVerified: true,
+                disabled: true,
+                updatedAt: true,
+                createdAt: true,
+                lastSignInAt: true,
+            },
+        });
 
-            const user = await tx.users.create({
-                data: sanitizedData,
-                select: {
-                    uid: true,
-                    email: true,
-                    name: true,
-                    avatar: true,
-                    tenantId: true,
-                    isAdmin: true,
-                    phoneNumber: true,
-                    emailVerified: true,
-                    disabled: true,
-                    updatedAt: true,
-                    createdAt: true,
-                    lastSignInAt: true,
-                },
-            });
+        if (!user) {
+            throw new Error("Failed to create user: No user returned from database")
+        }
 
-            if (!user) {
-                throw new Error("Failed to create user: No user returned from database")
-            }
-
-            const workspaceName = user.name
-                ? `${user.name}'s Workspace`
-                : `${user.email.split('@')[0]}'s Workspace`
-
-            const workspaceData: WorkspaceCreateInput = {
-                name: workspaceName,
-                description: 'Personal workspace',
-                ownerId: user.uid,
-                tenantId: user.tenantId,
-                type: 'personal',
-                disabled: false
-            }
-
-            if (workspaceId) {
-                workspaceData.id = workspaceId
-            }
-
-            const workspace = await tx.workspaces.create({
-                data: workspaceData,
-                select: {
-                    id: true,
-                    name: true,
-                    type: true,
-                    createdAt: true
-                }
-            })
-
-            await tx.workspaceMembers.create({
-                data: {
-                    workspaceId: workspace.id,
-                    userId: user.uid,
-                    role: 'owner'
-                }
-            })
-
-            return {
-                user,
-                workspace: {
-                    id: workspace.id,
-                    name: workspace.name,
-                    type: workspace.type
-                }
-            }
-        })
-
-        return result;
+        return { user };
     } catch (error) {
         console.error('Failed to create user in database:', error);
         throw error;
@@ -502,6 +455,154 @@ export async function getChatMessages(chatId: string, workspaceId?: string) {
 }
 
 
+/**
+ * Get messages from DB for a room (direct chat between two users)
+ * Room ID is constructed from emails: room_email1_email2
+ * Supports cursor-based pagination for infinite scroll
+ */
+export async function getRoomMessages(
+    roomId: string,
+    options?: {
+        limit?: number;
+        cursor?: string; // messageId to paginate from
+    }
+) {
+    try {
+        const limit = options?.limit || 50;
+
+        // First, find the chat by roomId
+        const chat = await prisma.chats.findFirst({
+            where: {
+                roomId: roomId,
+                type: 'direct'
+            },
+            select: {
+                id: true
+            }
+        });
+
+        if (!chat) {
+            return {
+                success: true,
+                messages: [],
+                nextCursor: null,
+                hasMore: false
+            };
+        }
+
+        // Build where condition for messages
+        const whereCondition: any = {
+            chatId: chat.id
+        };
+
+        // Add cursor condition if provided (for pagination)
+        if (options?.cursor) {
+            whereCondition.id = {
+                lt: options.cursor // Get messages older than cursor
+            };
+        }
+
+        // Fetch messages with pagination
+        const messages = await prisma.messages.findMany({
+            where: whereCondition,
+            orderBy: {
+                createdAt: 'desc'
+            },
+            take: limit + 1, // Fetch one extra to determine if there are more
+            include: {
+                sender: {
+                    select: {
+                        uid: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                    }
+                }
+            }
+        });
+
+        const hasMore = messages.length > limit;
+        const paginatedMessages = hasMore ? messages.slice(0, limit) : messages;
+        const nextCursor = hasMore ? paginatedMessages[paginatedMessages.length - 1].id : null;
+
+        return {
+            success: true,
+            messages: paginatedMessages,
+            nextCursor,
+            hasMore
+        };
+    } catch (error) {
+        console.error('Error fetching room messages:', error);
+        return {
+            success: false,
+            error: {
+                code: 'FETCH_MESSAGES_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to fetch messages'
+            }
+        };
+    }
+}
+
+
+/**
+ * Mark all unread messages in a room as read for a specific user
+ * Only marks messages sent BY OTHER users (not the current user's own messages)
+ * Uses roomId (email-based) for lookup - optimized for direct chats
+ * Uses a single batch update for efficiency
+ */
+export async function markRoomMessagesAsRead(roomId: string, currentUserId: string) {
+    try {
+        // First, find the chat by roomId
+        const chat = await prisma.chats.findFirst({
+            where: {
+                roomId: roomId,
+                type: 'direct'
+            },
+            select: {
+                id: true
+            }
+        });
+
+        if (!chat) {
+            return {
+                success: true,
+                updatedCount: 0
+            };
+        }
+
+        // Batch update all unread messages from other users in this chat
+        const result = await prisma.messages.updateMany({
+            where: {
+                chatId: chat.id,
+                read: false,
+                senderId: {
+                    not: currentUserId // Only mark messages from OTHER users as read
+                }
+            },
+            data: {
+                read: true,
+                readAt: new Date()
+            }
+        });
+
+        return {
+            success: true,
+            updatedCount: result.count
+        };
+    } catch (error) {
+        console.error('Error marking room messages as read:', error);
+        return {
+            success: false,
+            error: {
+                code: 'MARK_READ_ERROR',
+                message: error instanceof Error ? error.message : 'Failed to mark messages as read'
+            }
+        };
+    }
+}
+
+
+
 export async function createNewChat(currentUserId: string, otherUserId: string, workspaceId: string, initialMessage: string) {
     try {
         const [currentUser, otherUser] = await Promise.all([
@@ -703,7 +804,6 @@ export async function markMessagesAsRead(chatId: string, currentUserId: string, 
         };
     }
 }
-
 
 
 // ==================== WORKSPACE QUERIES ====================
