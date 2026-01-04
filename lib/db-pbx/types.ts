@@ -18,7 +18,7 @@ import type {
   pbx_users,
   pbx_user_settings,
   Prisma
-} from '@prisma/client'
+} from '@/prisma-vgt-pbx/pbx-database-client-types/client';
 
 export interface AuthUserFull extends auth_user { }
 
@@ -709,10 +709,12 @@ export interface DomainCreateInput {
   settings?: DomainSettingCreateInput[];
 }
 
+/**
+ * removed tenantId - for type match, check if still need tenantId
+ */
 export type DomainDisplay = Pick<Domain,
   | 'id'
   | 'name'
-  | 'tenantId'
   | 'portalName'
   | 'homeSwitch'
   | 'description'
@@ -836,14 +838,15 @@ export interface TenantCreateInput {
   maxUsers?: number;
 }
 
+/**
+ * removed 
+ *  - domain, logo, plan and maxUsers
+ * - for type match, check if still need tenantId
+ */
 export type TenantDisplay = Pick<Tenant,
   | 'id'
   | 'name'
-  | 'domain'
   | 'description'
-  | 'logo'
-  | 'plan'
-  | 'maxUsers'
   | 'disabled'
 >;
 
