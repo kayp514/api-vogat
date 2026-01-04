@@ -2,11 +2,11 @@ import 'dotenv/config'
 import { defineConfig, env } from 'prisma/config';
 
 export default defineConfig({
-  schema: 'prisma/schema.prisma',
+  schema: 'prisma-vgt-phone/schema.prisma',
   migrations: {
-    path: 'prisma/migrations'
+    path: 'prisma-vgt-phone/migrations'
   },
   datasource: {
-    url: env('DATABASE_URL'),
+    url: env('VGT_PHONE_DATABASE_URL'),
   },
 });

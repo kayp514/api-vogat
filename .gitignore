@@ -42,3 +42,6 @@ next-env.d.ts
 /.turbo/
 
 /app/generated/prisma
+
+pbx-database-client-types/
+phone-database-client-types/

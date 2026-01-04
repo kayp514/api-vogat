@@ -1,6 +1,6 @@
 'use server'
 
-import prisma from '@/lib/prisma';
+import prisma from '@/lib/phone-prisma-client';
 import type { DatabaseUserInput, SearchResult, WorkspaceCreateInput } from './types';
 
 
