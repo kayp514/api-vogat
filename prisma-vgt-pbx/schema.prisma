@@ -1250,6 +1250,8 @@ model pbx_domains {
   synchronised DateTime? @db.Timestamptz(6)
   updatedBy    String    @db.VarChar(64)
   homeSwitch   String?   @db.VarChar(128)
+  switchStatus String    @default("pending") @db.VarChar(20)
+  ipAddress    String?   @db.VarChar(45)
   menuId       String?   @db.Uuid
   portalName   String?   @unique @db.VarChar(128)
 
