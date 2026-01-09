@@ -1,7 +1,7 @@
 'use server'
 
 import prisma from '@/lib/pbx-prisma-client';
-import type { CreateAuthUserInput, AuthUserWithTenant } from '@/lib/db-pbx/types';
+import type { CreateAuthUserInput, AuthUserWithTenant, Domain } from '@/lib/db-pbx/types';
 
 
 export async function createAuthUser(data: CreateAuthUserInput): Promise<AuthUserWithTenant> {
@@ -146,6 +146,58 @@ export async function consumeInvite(token: string, usedAt: Date = new Date()) {
         include: {
             auth_group: true,
             pbx_domain: true,
+        },
+    });
+}
+
+
+export async function getDomain(id: string): Promise<Domain | null> {
+    try {
+        return await prisma.pbx_domains.findUnique({
+            where: { id },
+            include: {
+                domain_settings: true,
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching domain:', error)
+        throw error
+    }
+}
+
+
+/**
+ * Update domain switch provisioning status
+ * Used by Cloud Run provisioning service to update homeSwitch, switchStatus, ipAddress
+ */
+export async function updateDomainSwitchStatus(
+    id: string,
+    data: {
+        switchStatus: string;
+        homeSwitch?: string;
+        ipAddress?: string;
+    }
+): Promise<{
+    id: string;
+    name: string;
+    homeSwitch: string | null;
+    switchStatus: string;
+    ipAddress: string | null;
+}> {
+    return await prisma.pbx_domains.update({
+        where: { id },
+        data: {
+            switchStatus: data.switchStatus,
+            ...(data.homeSwitch !== undefined && { homeSwitch: data.homeSwitch }),
+            ...(data.ipAddress !== undefined && { ipAddress: data.ipAddress }),
+            updated: new Date(),
+        },
+        select: {
+            id: true,
+            name: true,
+            homeSwitch: true,
+            switchStatus: true,
+            ipAddress: true,
         },
     });
 }
