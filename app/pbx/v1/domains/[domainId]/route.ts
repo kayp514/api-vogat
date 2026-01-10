@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { updateDomainSwitchStatus, getDomain } from '@/lib/db-pbx/queries';
 
-type SwitchStatus = "pending" | "provisioning" | "ready" | "failed"
+type SwitchStatus = "pending" | "provisioning" | "provisioned" | "failed"
 
-const VALID_STATUSES: SwitchStatus[] = ['pending', 'provisioning', 'ready', 'failed'];
+const VALID_STATUSES: SwitchStatus[] = ['pending', 'provisioning', 'provisioned', 'failed'];
 
 /**
  * PATCH /api/v1/domains/:domainId
